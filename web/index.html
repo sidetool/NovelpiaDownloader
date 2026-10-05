@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novelpia Downloader</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><span class="brand-icon">N</span><span>Novelpia <strong>Downloader</strong></span></a>
+    <nav aria-label="메뉴">
+      <button id="download-tab" class="active" aria-pressed="true">다운로드</button>
+      <button id="queue-tab" aria-pressed="false">대기열 <span id="queue-count">0</span></button>
+      <button id="files-tab" aria-pressed="false">저장 파일 <span id="file-count">0</span></button>
+    </nav>
+    <span id="connection" role="status">연결 중</span>
+  </header>
+  <main>
+    <div id="notice" role="status" hidden></div>
+    <section id="download-panel" aria-label="소설 다운로드">
+      <div class="page-title"><div><p class="eyebrow">YOUR NEXT CHAPTER</p><h1>소설 다운로드</h1><p>읽고 싶은 작품을 EPUB 또는 TXT로 저장하세요.</p></div><span class="format-label">EPUB / TXT</span></div>
+      <div class="workspace">
+        <div class="setup-column">
+          <details class="card account-card" id="account-section" open>
+            <summary><span>계정 연결</span><span id="account-status">로그인 정보 입력</span></summary>
+            <form id="login-form">
+              <div class="segmented" role="group" aria-label="로그인 방식">
+                <label><input type="radio" name="login-mode" value="email" checked> 이메일</label>
+                <label><input type="radio" name="login-mode" value="key"> LOGINKEY</label>
+              </div>
+              <div id="email-login">
+                <label for="email">이메일</label><input id="email" type="email" autocomplete="username" placeholder="노벨피아 이메일">
+                <label for="password">비밀번호</label><input id="password" type="password" autocomplete="current-password" placeholder="노벨피아 비밀번호">
+              </div>
+              <div id="key-login" hidden><label for="login-key">LOGINKEY</label><input id="login-key" type="password" autocomplete="off" placeholder="노벨피아 LOGINKEY를 붙여넣으세요"><p class="hint">SNS 계정은 로그인한 브라우저의 LOGINKEY를 사용하세요.</p></div>
+              <div class="card-actions"><button id="login-button" type="submit">로그인</button></div>
+            </form>
+          </details>
+          <form id="job-form" class="card job-card">
+            <div class="card-title"><h2>다운로드 설정</h2><span>01</span></div>
+            <label for="novel-number">소설 URL 또는 번호</label>
+            <input id="novel-number" name="novelNumber" type="text" autocomplete="off" placeholder="https://novelpia.com/novel/123456">
+            <label>파일 형식</label>
+            <div class="format-options">
+              <label><input type="radio" name="format" value="epub" checked><span><strong>EPUB</strong><small>전자책으로 읽기</small></span></label>
+              <label><input type="radio" name="format" value="txt"><span><strong>TXT</strong><small>텍스트로 저장</small></span></label>
+            </div>
+            <div class="range-options">
+              <div><label class="check"><input id="from-enabled" type="checkbox" name="fromEnabled"> 화부터</label><input name="from" type="number" value="0" disabled aria-label="시작 회차"></div>
+              <span>—</span>
+              <div><label class="check"><input id="to-enabled" type="checkbox" name="toEnabled"> 화까지</label><input name="to" type="number" value="1" disabled aria-label="마지막 회차"></div>
+            </div>
+            <p class="hint">범위를 선택하지 않으면 전체 회차를 다운로드합니다.</p>
+            <details class="advanced">
+              <summary>다운로드 옵션</summary>
+              <div class="number-options">
+                <div><label for="thread-num">스레드</label><input id="thread-num" name="threadNum" type="number" value="1"></div>
+                <div><label for="interval">간격 (초)</label><input id="interval" name="interval" type="number" step="0.1" value="0"></div>
+                <div><label for="retry">재시도</label><input id="retry" name="retry" type="number" value="3"></div>
+              </div>
+              <label for="bonus-mode">BONUS 회차</label><select id="bonus-mode"><option value="range">회차 범위에 따라 포함</option><option value="never">제외</option><option value="always">항상 포함</option></select>
+              <div class="check-grid">
+                <label class="check"><input name="includeNotice" type="checkbox"> 공지 포함</label>
+                <label class="check"><input name="removeBlank" type="checkbox"> 빈 줄 제거</label>
+                <label class="check"><input name="keepHtml" type="checkbox" checked> HTML 유지</label>
+                <label class="check"><input name="compress" type="checkbox" checked> EPUB 압축</label>
+                <label class="check"><input name="downloadImage" type="checkbox" checked> 이미지 다운로드</label>
+                <label class="check"><input name="stopOnError" type="checkbox"> 오류 시 중단</label>
+                <label class="check"><input name="includeNovelNo" type="checkbox"> 파일명에 소설 번호</label>
+                <label class="check"><input name="includeChapterRange" type="checkbox"> 파일명에 회차 범위</label>
+                <label class="check"><input name="vertical" type="checkbox"> 세로 쓰기</label>
+                <label class="check"><input name="gothic" type="checkbox" checked> 돋움체 (기본: 바탕체)</label>
+              </div>
+            </details>
+            <div class="job-actions"><button id="save-settings" type="button" class="quiet">설정 저장</button><button id="add-queue" type="button">목록에 추가</button><button id="download-button" type="submit" class="primary">다운로드</button></div>
+          </form>
+        </div>
+        <aside class="monitor-column">
+          <div class="card progress-card"><div class="card-title"><h2>진행 상황</h2><span id="job-status">대기 중</span></div><progress id="progress" max="1" value="0"></progress><div class="progress-numbers"><span>완료 <strong id="progress-done">0</strong></span><span>실패 <strong id="progress-fail">0</strong></span><span>전체 <strong id="progress-total">0</strong></span></div><button id="stop-button" class="danger" disabled>다운로드 중단</button></div>
+          <div class="card log-card"><div class="card-title"><h2>실행 로그</h2><button id="copy-log" class="quiet">복사</button></div><pre id="log" role="log" aria-label="다운로드 실행 로그">작품을 선택하면 실행 로그가 여기에 표시됩니다.</pre><label class="check log-footer"><input id="auto-scroll" type="checkbox" checked> 자동 스크롤</label></div>
+        </aside>
+      </div>
+    </section>
+    <section id="queue-panel" aria-label="다운로드 대기열" hidden>
+      <div class="page-title"><div><p class="eyebrow">READING LIST</p><h1>다운로드 대기열</h1><p>추가할 때 선택한 설정으로 작품을 순서대로 다운로드합니다.</p></div></div>
+      <div class="list-actions"><button id="queue-remove">선택 삭제</button><button id="queue-clear">전체 삭제</button><button id="queue-start" class="primary">대기열 다운로드</button></div>
+      <p id="queue-empty" class="empty">대기열이 비어 있습니다. 다운로드 화면에서 작품을 목록에 추가하세요.</p><ul id="queue"></ul>
+    </section>
+    <section id="files-panel" aria-label="저장 파일" hidden>
+      <div class="page-title"><div><p class="eyebrow">YOUR LIBRARY</p><h1>저장 파일</h1><p>다운로드가 완료된 EPUB · TXT를 기기에 저장하세요.</p></div><button id="refresh">새로고침</button></div>
+      <p id="files-status" class="empty" role="status"></p><ul id="files"></ul><p class="hint">목록은 10초마다 갱신됩니다. 진행 중인 작품은 완료 로그를 확인한 뒤 받으세요.</p>
+    </section>
+  </main>
+</body>
+</html>

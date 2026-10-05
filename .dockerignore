@@ -1,0 +1,8 @@
+.git
+.env
+data
+bin
+obj
+tests
+.github
+*.user

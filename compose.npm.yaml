@@ -1,0 +1,9 @@
+# Use with: docker compose -f compose.yaml -f compose.npm.yaml up -d --build
+services:
+  novelpia-downloader:
+    networks:
+      - default
+      - proxy-nw
+networks:
+  proxy-nw:
+    external: true
