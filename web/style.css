@@ -59,6 +59,10 @@ input[type=checkbox], input[type=radio] { accent-color: #7850d9; }
 .range-options > span { padding-bottom: 10px; color: #b8b8c7; text-align: center; }
 .check { display: flex; align-items: center; gap: 7px; margin: 7px 0; }
 .hint { font-size: 11px; margin-top: 9px; }
+.optimization-option { margin-top: 18px; }
+.optimization-card { margin-bottom: 24px; }
+.optimization-card .card-title { margin-bottom: 12px; }
+.optimization-card p { margin-top: 12px; overflow-wrap: anywhere; }
 .advanced { border-top: 1px solid #edf0f5; margin-top: 20px; padding-top: 16px; }
 .advanced summary { color: #747d90; font-size: 12px; font-weight: 500; }
 .number-options { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -88,7 +92,7 @@ li { display: flex; align-items: center; gap: 18px; padding: 20px; margin: 10px 
 .file-kind { color: #7850d9; font-size: 11px; background: #f2ecfd; padding: 12px 8px; border-radius: 6px; }
 #files-panel .page-title { flex-wrap: wrap; align-items: flex-start; }
 .file-list-actions, .file-actions { display: flex; gap: 8px; }
-.file-actions { flex: 0 0 auto; }
+.file-actions { flex: 0 0 auto; flex-wrap: wrap; }
 #files li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
 li div { min-width: 0; flex: 1; }
 li strong { font-size: 13px; overflow-wrap: anywhere; }

@@ -9,6 +9,7 @@ let noticeTimer;
 let storedFiles = [];
 let filesReady = false;
 let fileRefreshVersion = 0;
+let optimizationWasRunning = false;
 
 function notice(message, error = false) {
   clearTimeout(noticeTimer);
@@ -48,13 +49,14 @@ function settings() {
 }
 
 function updateDisabled() {
-  const busy = pending || Boolean(state?.action) || Boolean(state?.running || state?.queueRunning);
+  const busy = pending || Boolean(state?.action) || Boolean(state?.running || state?.queueRunning || state?.optimization?.running);
   for (const form of [jobForm, $('#login-form')]) {
     for (const input of form.elements) input.disabled = busy;
   }
   if (!busy) {
     jobForm.elements.namedItem('from').disabled = !$('#from-enabled').checked;
     jobForm.elements.namedItem('to').disabled = !$('#to-enabled').checked;
+    jobForm.elements.namedItem('optimizeImages').disabled = jobForm.elements.namedItem('format').value !== 'epub';
   }
   for (const id of ['queue-remove', 'queue-clear', 'queue-start']) {
     $(`#${id}`).disabled = busy || !state?.queue?.length;
@@ -63,9 +65,10 @@ function updateDisabled() {
   $('#download-button').textContent = pending ? '처리 중…' : '다운로드';
   const fileBusy = !state || busy || !filesReady;
   $('#files-clear').disabled = fileBusy || !storedFiles.length;
-  for (const button of document.querySelectorAll('[data-file-delete]')) button.disabled = fileBusy;
+  for (const button of document.querySelectorAll('[data-file-delete], [data-file-optimize]')) button.disabled = fileBusy;
   $('#file-delete-hint').textContent = state?.running || state?.queueRunning
     ? '다운로드가 끝나면 파일을 삭제할 수 있습니다.'
+    : state?.optimization?.running ? '이미지 최적화가 끝나면 파일을 삭제할 수 있습니다.'
     : '삭제한 파일은 복구할 수 없습니다. 다운로드 중에는 삭제할 수 없으며, 로그인 정보와 설정은 유지됩니다.';
 }
 
@@ -83,7 +86,24 @@ function render(next) {
     ? state.authMode === 'key' ? 'LOGINKEY 적용됨' : state.authMode === 'saved' ? '저장된 로그인 정보' : '로그인됨'
     : '로그인 정보 입력';
   const progress = state.progress;
-  $('#job-status').textContent = state.cancelRequested ? '중단 중' : state.running ? '다운로드 중' : state.action ? '요청 처리 중' : state.queueRunning ? '대기열 처리 중' : '대기 중';
+  $('#job-status').textContent = state.optimization?.running ? '이미지 최적화 중' : state.cancelRequested ? '중단 중' : state.running ? '다운로드 중' : state.action ? '요청 처리 중' : state.queueRunning ? '대기열 처리 중' : '대기 중';
+  const optimization = state.optimization || {};
+  $('#optimization-status').hidden = !optimization.id;
+  if (optimization.id) {
+    $('#optimization-title').textContent = optimization.running ? '이미지 최적화 중' : optimization.status === 'error' ? '최적화 결과 확인' : '이미지 최적화 완료';
+    $('#optimization-count').textContent = optimization.running
+      ? `이미지 ${optimization.done} / ${optimization.total}${optimization.fileCount > 1 ? ` · 파일 ${optimization.filesDone + 1} / ${optimization.fileCount}` : ''}` : '';
+    $('#optimization-progress').hidden = !optimization.running;
+    $('#optimization-progress').max = Math.max(optimization.total, 1);
+    if (optimization.total === 0) $('#optimization-progress').removeAttribute('value');
+    else $('#optimization-progress').value = optimization.done;
+    $('#optimization-message').textContent = optimization.running ? optimization.file : optimization.message;
+    if (optimizationWasRunning && !optimization.running) {
+      notice(optimization.message, optimization.status === 'error');
+      refreshFiles();
+    }
+  }
+  optimizationWasRunning = Boolean(optimization.running);
   $('#progress').max = Math.max(progress.total, 1);
   if (state.running && progress.total === 0) $('#progress').removeAttribute('value');
   else $('#progress').value = progress.done + progress.failed;
@@ -164,6 +184,7 @@ $('#login-form').addEventListener('submit', async event => {
 });
 $('#from-enabled').addEventListener('change', updateDisabled);
 $('#to-enabled').addEventListener('change', updateDisabled);
+for (const input of document.querySelectorAll('[name="format"]')) input.addEventListener('change', updateDisabled);
 jobForm.addEventListener('submit', async event => {
   event.preventDefault();
   const result = await action('/api/download', { settings: settings() });
@@ -231,7 +252,15 @@ async function refreshFiles() {
         await action('/api/files/delete', { name: file.name });
         await refreshFiles();
       });
-      const actions = document.createElement('div'); actions.className = 'file-actions'; actions.append(link, remove);
+      const actions = document.createElement('div'); actions.className = 'file-actions'; actions.append(link);
+      if (/\.epub$/i.test(file.name)) {
+        const optimize = document.createElement('button'); optimize.type = 'button'; optimize.textContent = '최적화';
+        optimize.dataset.fileOptimize = file.name;
+        optimize.setAttribute('aria-label', `${file.name} 이미지 최적화`);
+        optimize.addEventListener('click', () => action('/api/files/optimize', { name: file.name }));
+        actions.append(optimize);
+      }
+      actions.append(remove);
       item.append(kind, details, actions); $('#files').append(item);
     }
     $('#files-status').textContent = files.length ? '' : '아직 저장된 파일이 없습니다.';

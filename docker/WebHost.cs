@@ -21,7 +21,14 @@ internal static class WebHost
     private static volatile string stateJson = "{}";
     private static string activeAction;
     private static string authMode = "";
+    private static bool optimizeImages;
+    private static readonly EpubOptimization optimizer = new EpubOptimization();
+    private static readonly Dictionary<object, bool> queueOptimization = new Dictionary<object, bool>();
+    private static Dictionary<string, string> downloadBaseline;
+    private static List<object> watchedQueue;
+    private static bool watchDownload;
     private const string Downloads = "/data/downloads";
+    private const string WebSettings = "/data/state/web-settings.json";
     private static readonly Dictionary<string, string> Numbers = new Dictionary<string, string> {
         {"threadNum", "ThreadNum"}, {"interval", "IntervalNum"}, {"retry", "RetryNum"},
         {"from", "FromNum"}, {"to", "ToNum"}
@@ -43,6 +50,7 @@ internal static class WebHost
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         window = new MainWin();
+        LoadWebSettings();
         ControlOf<TextBox>("OutputDirText").Text = "/data/downloads";
         window.ShowInTaskbar = false;
         window.Shown += delegate {
@@ -88,6 +96,7 @@ internal static class WebHost
 
     private static void CaptureState()
     {
+        CheckCompletedDownload();
         var settings = new Dictionary<string, object>();
         var limits = new Dictionary<string, object>();
         foreach (var field in Numbers) {
@@ -98,13 +107,19 @@ internal static class WebHost
         foreach (var field in Checks) settings[field.Key] = ControlOf<CheckBox>(field.Value).Checked;
         settings["format"] = ControlOf<RadioButton>("EpubButton").Checked ? "epub" : "txt";
         settings["novelNumber"] = ControlOf<TextBox>("NovelNoText").Text;
+        settings["optimizeImages"] = optimizeImages;
         var queue = new List<object>();
         var list = ControlOf<ListBox>("DownloadList");
-        for (int i = 0; i < list.Items.Count; i++) queue.Add(new { index = i, label = list.Items[i].ToString() });
+        var jobs = (IList)Field("_queue");
+        for (int i = 0; i < list.Items.Count; i++) {
+            bool enabled;
+            bool optimize = i < jobs.Count && queueOptimization.TryGetValue(jobs[i], out enabled) && enabled;
+            queue.Add(new { index = i, label = list.Items[i].ToString() + (optimize ? " · 이미지 최적화" : "") });
+        }
         string log = ControlOf<TextBox>("ConsoleBox").Text;
         if (log.Length > 64000) log = log.Substring(log.Length - 64000);
         var snapshot = new {
-            settings, limits, queue, log,
+            settings, limits, queue, log, optimization = optimizer.Snapshot(),
             running = (bool)Field("_running"), queueRunning = (bool)Field("_queueRunning"),
             cancelRequested = (bool)Field("_cancelRequested"),
             progress = new { total = Field("_progress_total"), done = Field("_progress_done"),
@@ -168,7 +183,7 @@ internal static class WebHost
             }
             var routes = new HashSet<string> { "/api/settings", "/api/login", "/api/download",
                 "/api/stop", "/api/queue/add", "/api/queue/start", "/api/queue/remove", "/api/queue/clear",
-                "/api/files/delete", "/api/files/clear" };
+                "/api/files/delete", "/api/files/clear", "/api/files/optimize" };
             if (method != "POST" || !routes.Contains(path)) { Send(context, 404, new { error = "요청한 기능이 없습니다." }); return; }
             // Custom JSON requests require a preflight cross-origin; no CORS is enabled.
             if (context.Request.Headers["X-Requested-With"] != "Novelpia-Web") {
@@ -249,10 +264,71 @@ internal static class WebHost
         var file = new FileInfo(Path.Combine(Downloads, name));
         if (!file.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase) &&
             !file.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("저장된 EPUB/TXT 파일만 삭제할 수 있습니다.");
+            throw new ArgumentException("저장된 EPUB/TXT 파일만 선택할 수 있습니다.");
         if (!file.Exists) throw new FileNotFoundException("파일이 없습니다. 목록을 새로고침해 주세요.");
-        if (!IsStoredFile(file)) throw new ArgumentException("일반 EPUB/TXT 파일만 삭제할 수 있습니다.");
+        if (!IsStoredFile(file)) throw new ArgumentException("일반 EPUB/TXT 파일만 선택할 수 있습니다.");
         return file;
+    }
+
+    private static void LoadWebSettings()
+    {
+        try {
+            if (!File.Exists(WebSettings)) return;
+            var settings = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(WebSettings));
+            object value;
+            optimizeImages = settings != null && settings.TryGetValue("optimizeImages", out value) && value is bool && (bool)value;
+        } catch { Console.Error.WriteLine("웹 설정을 읽지 못해 이미지 최적화를 기본값으로 시작합니다."); }
+    }
+
+    private static void SaveWebSettings()
+    {
+        string temporary = WebSettings + ".tmp";
+        File.WriteAllText(temporary, new JavaScriptSerializer().Serialize(new { optimizeImages }));
+        if (File.Exists(WebSettings)) File.Replace(temporary, WebSettings, null);
+        else File.Move(temporary, WebSettings);
+    }
+
+    private static string Stamp(FileInfo file)
+    {
+        return file.Length.ToString(CultureInfo.InvariantCulture) + ":" + file.LastWriteTimeUtc.Ticks;
+    }
+
+    private static void BeginDownloadWatch(List<object> jobs)
+    {
+        watchedQueue = jobs;
+        downloadBaseline = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var file in StoredFiles()) {
+            if (file.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase)) downloadBaseline[file.Name] = Stamp(file);
+        }
+        watchDownload = true;
+    }
+
+    private static void StartOptimization(List<string> names)
+    {
+        optimizer.Start(names, delegate(string line) {
+            try {
+                window.BeginInvoke(new Action(delegate { ControlOf<TextBox>("ConsoleBox").AppendText(line); }));
+            } catch (InvalidOperationException) { }
+        });
+    }
+
+    private static void CheckCompletedDownload()
+    {
+        if (!watchDownload || (bool)Field("_running") || (bool)Field("_queueRunning")) return;
+        watchDownload = false;
+        var allowed = new HashSet<string>(StringComparer.Ordinal);
+        if (watchedQueue != null) foreach (object job in watchedQueue) {
+            string path = (string)job.GetType().GetField("targetPath").GetValue(job);
+            if (!string.IsNullOrEmpty(path) && Path.GetDirectoryName(path) == Downloads) allowed.Add(Path.GetFileName(path));
+        }
+        var names = new List<string>();
+        foreach (var file in StoredFiles()) {
+            if (!file.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase) ||
+                (watchedQueue != null && !allowed.Contains(file.Name))) continue;
+            string previous;
+            if (!downloadBaseline.TryGetValue(file.Name, out previous) || previous != Stamp(file)) names.Add(file.Name);
+        }
+        if (names.Count > 0) StartOptimization(names);
     }
 
     private static void ApplySettings(Dictionary<string, object> data)
@@ -273,7 +349,7 @@ internal static class WebHost
                     (item.Key != "interval" && value != Math.Truncate(value)))
                     throw new ArgumentException("설정 범위를 확인해 주세요: " + item.Key);
                 numbers[item.Key] = value;
-            } else if (Checks.ContainsKey(item.Key)) {
+            } else if (Checks.ContainsKey(item.Key) || item.Key == "optimizeImages") {
                 if (!(item.Value is bool)) throw new ArgumentException("체크 옵션이 올바르지 않습니다.");
             } else if (item.Key == "format") {
                 if (!Equals(item.Value, "epub") && !Equals(item.Value, "txt")) throw new ArgumentException("EPUB 또는 TXT를 선택해 주세요.");
@@ -288,6 +364,7 @@ internal static class WebHost
         foreach (var item in settings) {
             if (Checks.ContainsKey(item.Key)) ControlOf<CheckBox>(Checks[item.Key]).Checked = (bool)item.Value;
         }
+        if (settings.ContainsKey("optimizeImages")) optimizeImages = (bool)settings["optimizeImages"];
         if (settings.ContainsKey("format")) {
             ControlOf<RadioButton>("EpubButton").Checked = Equals(settings["format"], "epub");
             ControlOf<RadioButton>("TxtButton").Checked = Equals(settings["format"], "txt");
@@ -298,9 +375,17 @@ internal static class WebHost
 
     private static object Execute(string path, Dictionary<string, object> data)
     {
+        CheckCompletedDownload();
+        if (optimizer.IsRunning) throw new InvalidOperationException("이미지 최적화가 끝난 뒤 변경해 주세요.");
         bool running = (bool)Field("_running") || (bool)Field("_queueRunning");
         if (running && path != "/api/stop") throw new InvalidOperationException("다운로드가 끝난 뒤 변경해 주세요.");
         switch (path) {
+            case "/api/files/optimize":
+                var source = StoredFile(Text(data, "name"));
+                if (!source.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("EPUB 파일만 이미지 최적화할 수 있습니다.");
+                StartOptimization(new List<string> { source.Name });
+                return new { ok = true, message = "이미지 최적화를 시작했습니다. 원본은 유지하고 최적화본을 따로 저장합니다." };
             case "/api/files/delete":
                 StoredFile(Text(data, "name")).Delete();
                 return new { ok = true, deleted = 1, message = "파일을 삭제했습니다." };
@@ -334,6 +419,7 @@ internal static class WebHost
             case "/api/settings":
                 ApplySettings(data);
                 OriginalEvent("MainWin_FormClosed");
+                SaveWebSettings();
                 return new { ok = true, message = "설정을 저장했습니다." };
             case "/api/download":
             case "/api/queue/add":
@@ -345,17 +431,34 @@ internal static class WebHost
                 }
                 if (!Regex.IsMatch(novel, @"\d+")) throw new ArgumentException("소설 URL 또는 번호를 입력해 주세요.");
                 ApplySettings(data);
-                OriginalEvent(path == "/api/download" ? "DownloadButton_Click" : "AddToListButton_Click");
+                var originalQueue = (IList)Field("_queue");
+                int queueBefore = originalQueue.Count;
+                if (path == "/api/download" && optimizeImages && ControlOf<RadioButton>("EpubButton").Checked)
+                    BeginDownloadWatch(null);
+                try {
+                    OriginalEvent(path == "/api/download" ? "DownloadButton_Click" : "AddToListButton_Click");
+                } catch { if (path == "/api/download") watchDownload = false; throw; }
+                if (path == "/api/queue/add" && originalQueue.Count > queueBefore)
+                    queueOptimization[originalQueue[originalQueue.Count - 1]] = optimizeImages && ControlOf<RadioButton>("EpubButton").Checked;
                 OriginalEvent("MainWin_FormClosed");
+                SaveWebSettings();
                 return new { ok = true };
             case "/api/stop":
                 if ((bool)Field("_running")) OriginalEvent("DownloadButton_Click");
                 return new { ok = true };
             case "/api/queue/start":
-                OriginalEvent("QueueDownloadButton_Click");
+                var selectedJobs = new List<object>();
+                foreach (object job in (IList)Field("_queue")) {
+                    bool enabled;
+                    if (queueOptimization.TryGetValue(job, out enabled) && enabled) selectedJobs.Add(job);
+                }
+                if (selectedJobs.Count > 0) BeginDownloadWatch(selectedJobs);
+                try { OriginalEvent("QueueDownloadButton_Click"); }
+                catch { watchDownload = false; throw; }
                 return new { ok = true };
             case "/api/queue/clear":
                 OriginalEvent("QueueDeleteAllButton_Click");
+                queueOptimization.Clear();
                 return new { ok = true };
             case "/api/queue/remove":
                 object indices;
@@ -372,6 +475,9 @@ internal static class WebHost
                 list.ClearSelected();
                 foreach (int index in selected) list.SetSelected(index, true);
                 OriginalEvent("QueueDeleteSelectedButton_Click");
+                var remainingJobs = new HashSet<object>();
+                foreach (object job in (IList)Field("_queue")) remainingJobs.Add(job);
+                foreach (object job in new List<object>(queueOptimization.Keys)) if (!remainingJobs.Contains(job)) queueOptimization.Remove(job);
                 return new { ok = true };
         }
         throw new ArgumentException("알 수 없는 요청입니다.");
