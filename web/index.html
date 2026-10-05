@@ -89,8 +89,9 @@
       <p id="queue-empty" class="empty">대기열이 비어 있습니다. 다운로드 화면에서 작품을 목록에 추가하세요.</p><ul id="queue"></ul>
     </section>
     <section id="files-panel" aria-label="저장 파일" hidden>
-      <div class="page-title"><div><p class="eyebrow">YOUR LIBRARY</p><h1>저장 파일</h1><p>다운로드가 완료된 EPUB · TXT를 기기에 저장하세요.</p></div><button id="refresh">새로고침</button></div>
-      <p id="files-status" class="empty" role="status"></p><ul id="files"></ul><p class="hint">목록은 10초마다 갱신됩니다. 진행 중인 작품은 완료 로그를 확인한 뒤 받으세요.</p>
+      <div class="page-title"><div><p class="eyebrow">YOUR LIBRARY</p><h1>저장 파일</h1><p>다운로드가 완료된 EPUB · TXT를 기기에 저장하세요.</p></div><div class="file-list-actions"><button id="refresh">새로고침</button><button id="files-clear" class="danger" disabled>전체 삭제</button></div></div>
+      <p id="files-status" class="empty" role="status"></p><ul id="files"></ul><p id="file-delete-hint" class="hint">삭제한 파일은 복구할 수 없습니다. 다운로드 중에는 삭제할 수 없으며, 로그인 정보와 설정은 유지됩니다.</p>
+      <p class="hint">목록은 10초마다 갱신됩니다. 진행 중인 작품은 완료 로그를 확인한 뒤 받으세요.</p>
     </section>
   </main>
 </body>

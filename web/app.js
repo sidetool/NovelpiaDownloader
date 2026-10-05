@@ -6,6 +6,9 @@ let pending = false;
 let lastLog;
 let lastQueue;
 let noticeTimer;
+let storedFiles = [];
+let filesReady = false;
+let fileRefreshVersion = 0;
 
 function notice(message, error = false) {
   clearTimeout(noticeTimer);
@@ -58,6 +61,12 @@ function updateDisabled() {
   }
   $('#stop-button').disabled = pending || !state?.running || Boolean(state?.cancelRequested);
   $('#download-button').textContent = pending ? '처리 중…' : '다운로드';
+  const fileBusy = !state || busy || !filesReady;
+  $('#files-clear').disabled = fileBusy || !storedFiles.length;
+  for (const button of document.querySelectorAll('[data-file-delete]')) button.disabled = fileBusy;
+  $('#file-delete-hint').textContent = state?.running || state?.queueRunning
+    ? '다운로드가 끝나면 파일을 삭제할 수 있습니다.'
+    : '삭제한 파일은 복구할 수 없습니다. 다운로드 중에는 삭제할 수 없으며, 로그인 정보와 설정은 유지됩니다.';
 }
 
 function render(next) {
@@ -197,11 +206,14 @@ function formatSize(size) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 async function refreshFiles() {
+  const version = ++fileRefreshVersion;
   try {
-    const response = await fetch('/files/', { cache: 'no-store' });
+    const response = await fetch('/api/files', { cache: 'no-store' });
     if (!response.ok) throw new Error();
     const files = (await response.json()).filter(file => file.type === 'file' && /\.(epub|txt)$/i.test(file.name))
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
+    if (version !== fileRefreshVersion) return;
+    storedFiles = files; filesReady = true;
     $('#file-count').textContent = files.length; $('#files').replaceChildren();
     for (const file of files) {
       const item = document.createElement('li');
@@ -211,10 +223,31 @@ async function refreshFiles() {
       const meta = document.createElement('small'); meta.textContent = `${formatSize(file.size)} · ${new Date(file.mtime).toLocaleString('ko-KR')}`;
       details.append(title, meta);
       const link = document.createElement('a'); link.href = `/files/${encodeURIComponent(file.name)}`; link.download = file.name; link.textContent = '다운로드';
-      item.append(kind, details, link); $('#files').append(item);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger';
+      remove.dataset.fileDelete = file.name; remove.textContent = '삭제';
+      remove.setAttribute('aria-label', `${file.name} 삭제`);
+      remove.addEventListener('click', async () => {
+        if (!confirm(`“${file.name}” 파일을 삭제할까요?\n삭제 후 복구할 수 없습니다.`)) return;
+        await action('/api/files/delete', { name: file.name });
+        await refreshFiles();
+      });
+      const actions = document.createElement('div'); actions.className = 'file-actions'; actions.append(link, remove);
+      item.append(kind, details, actions); $('#files').append(item);
     }
     $('#files-status').textContent = files.length ? '' : '아직 저장된 파일이 없습니다.';
-  } catch { $('#files-status').textContent = '파일 목록을 불러오지 못했습니다. 새로고침해 주세요.'; }
+    $('#files-status').hidden = files.length > 0;
+  } catch {
+    if (version !== fileRefreshVersion) return;
+    filesReady = false;
+    $('#files-status').hidden = false;
+    $('#files-status').textContent = '파일 목록을 불러오지 못했습니다. 새로고침해 주세요.';
+  }
+  updateDisabled();
 }
 $('#refresh').addEventListener('click', refreshFiles);
+$('#files-clear').addEventListener('click', async () => {
+  if (!confirm(`저장된 EPUB/TXT 파일 ${storedFiles.length}개를 모두 삭제할까요?\n삭제 후 복구할 수 없습니다.`)) return;
+  await action('/api/files/clear');
+  await refreshFiles();
+});
 loginMode(); poll(); refreshFiles(); setInterval(refreshFiles, 10000);

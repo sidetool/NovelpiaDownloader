@@ -21,6 +21,7 @@ internal static class WebHost
     private static volatile string stateJson = "{}";
     private static string activeAction;
     private static string authMode = "";
+    private const string Downloads = "/data/downloads";
     private static readonly Dictionary<string, string> Numbers = new Dictionary<string, string> {
         {"threadNum", "ThreadNum"}, {"interval", "IntervalNum"}, {"retry", "RetryNum"},
         {"from", "FromNum"}, {"to", "ToNum"}
@@ -149,13 +150,25 @@ internal static class WebHost
                 Send(context, 200, state);
                 return;
             }
+            if (method == "GET" && path == "/api/files") {
+                var files = new List<object>();
+                foreach (var file in StoredFiles()) {
+                    try {
+                        files.Add(new { type = "file", name = file.Name, size = file.Length,
+                            mtime = file.LastWriteTimeUtc.ToString("o", CultureInfo.InvariantCulture) });
+                    } catch (FileNotFoundException) { }
+                }
+                Send(context, 200, files);
+                return;
+            }
             if (method == "POST" && path == "/internal/close") {
                 Send(context, 200, new { ok = true });
                 window.BeginInvoke(new Action(delegate { window.Close(); }));
                 return;
             }
             var routes = new HashSet<string> { "/api/settings", "/api/login", "/api/download",
-                "/api/stop", "/api/queue/add", "/api/queue/start", "/api/queue/remove", "/api/queue/clear" };
+                "/api/stop", "/api/queue/add", "/api/queue/start", "/api/queue/remove", "/api/queue/clear",
+                "/api/files/delete", "/api/files/clear" };
             if (method != "POST" || !routes.Contains(path)) { Send(context, 404, new { error = "요청한 기능이 없습니다." }); return; }
             // Custom JSON requests require a preflight cross-origin; no CORS is enabled.
             if (context.Request.Headers["X-Requested-With"] != "Novelpia-Web") {
@@ -174,6 +187,7 @@ internal static class WebHost
             if (count > 65536) { Send(context, 413, new { error = "요청이 너무 큽니다." }); return; }
             var data = count == 0 ? new Dictionary<string, object>() :
                 new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(new string(buffer, 0, count));
+            if (data == null) throw new ArgumentException("요청 내용이 올바르지 않습니다.");
             if (Interlocked.CompareExchange(ref activeAction, path, null) != null) {
                 Send(context, 409, new { error = "이전 요청을 처리 중입니다." }); return;
             }
@@ -190,8 +204,11 @@ internal static class WebHost
             Send(context, 409, new { error = error.Message });
         } catch (Exception error) {
             while (error is TargetInvocationException && error.InnerException != null) error = error.InnerException;
-            int status = error is ArgumentException ? 400 : error is InvalidOperationException ? 409 : 502;
-            try { Send(context, status, new { error = (status == 502 ? "원본 프로그램 요청 실패: " : "") + error.Message }); }
+            int status = error is ArgumentException ? 400 : error is InvalidOperationException ? 409 :
+                error is FileNotFoundException ? 404 : 502;
+            string prefix = context.Request.Url.AbsolutePath.StartsWith("/api/files", StringComparison.Ordinal)
+                ? "파일 작업 실패: " : "원본 프로그램 요청 실패: ";
+            try { Send(context, status, new { error = (status == 502 ? prefix : "") + error.Message }); }
             catch { }
         } finally {
             if (claimed) Interlocked.Exchange(ref activeAction, null);
@@ -203,6 +220,39 @@ internal static class WebHost
         object value;
         if (!data.TryGetValue(key, out value) || !(value is string)) return "";
         return (string)value;
+    }
+
+    private static bool IsStoredFile(FileInfo file)
+    {
+        return file.Exists && (file.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0 &&
+            (file.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase) ||
+             file.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<FileInfo> StoredFiles()
+    {
+        var directory = new DirectoryInfo(Downloads);
+        if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("저장 폴더가 올바르지 않습니다.");
+        var files = new List<FileInfo>();
+        foreach (var file in directory.GetFiles()) if (IsStoredFile(file)) files.Add(file);
+        return files;
+    }
+
+    private static FileInfo StoredFile(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name.IndexOfAny(new[] { '/', '\\', '\0' }) >= 0 || Path.GetFileName(name) != name)
+            throw new ArgumentException("파일 이름이 올바르지 않습니다.");
+        // Validate the root and allow only direct, regular EPUB/TXT files.
+        if ((new DirectoryInfo(Downloads).Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("저장 폴더가 올바르지 않습니다.");
+        var file = new FileInfo(Path.Combine(Downloads, name));
+        if (!file.Extension.Equals(".epub", StringComparison.OrdinalIgnoreCase) &&
+            !file.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("저장된 EPUB/TXT 파일만 삭제할 수 있습니다.");
+        if (!file.Exists) throw new FileNotFoundException("파일이 없습니다. 목록을 새로고침해 주세요.");
+        if (!IsStoredFile(file)) throw new ArgumentException("일반 EPUB/TXT 파일만 삭제할 수 있습니다.");
+        return file;
     }
 
     private static void ApplySettings(Dictionary<string, object> data)
@@ -251,6 +301,13 @@ internal static class WebHost
         bool running = (bool)Field("_running") || (bool)Field("_queueRunning");
         if (running && path != "/api/stop") throw new InvalidOperationException("다운로드가 끝난 뒤 변경해 주세요.");
         switch (path) {
+            case "/api/files/delete":
+                StoredFile(Text(data, "name")).Delete();
+                return new { ok = true, deleted = 1, message = "파일을 삭제했습니다." };
+            case "/api/files/clear":
+                var files = StoredFiles();
+                foreach (var file in files) file.Delete();
+                return new { ok = true, deleted = files.Count, message = "저장 파일 " + files.Count + "개를 삭제했습니다." };
             case "/api/login":
                 if (Text(data, "mode") == "key") {
                     string key = Text(data, "loginKey").Trim();

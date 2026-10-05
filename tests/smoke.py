@@ -65,7 +65,7 @@ for line in (ROOT / 'docker/upstream.sha256').read_text().splitlines():
     assert hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == expected, name
 print('PASS: original source, project and resources are unchanged')
 
-for path in ['/', '/app.js', '/files/', '/api/state', '/api/settings']:
+for path in ['/', '/app.js', '/files/', '/api/state', '/api/settings', '/api/files', '/api/files/delete', '/api/files/clear']:
     assert request(path, False)[0] == 401, path
 wrong = 'Basic ' + base64.b64encode(b'admin:wrong-password').decode()
 assert request('/', headers={'Authorization': wrong})[0] == 401
@@ -82,6 +82,8 @@ bad = {'settings': {'threadNum': current['limits']['threadNum']['max'] + 1}}
 assert request('/api/settings', data=bad)[0] == 400
 assert request('/api/download', data={'settings': {'novelNumber': 'invalid'}})[0] == 400
 assert request('/api/queue/remove', data={'indices': [-1]})[0] == 400
+assert request('/api/files/delete', data={'name': '../state/config.json'})[0] == 400
+assert request('/api/files/clear', data={}, headers={'X-Requested-With': ''})[0] == 403
 print('PASS: web/API authentication, CSRF guard, native state and input validation')
 
 name = '웹 검증 ' + secrets.token_hex(6) + '.txt'
@@ -91,6 +93,8 @@ try:
     subprocess.run(['docker', 'exec', '-i', '-u', '1000', args.container, 'python3', '-c',
                     'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_bytes(sys.stdin.buffer.read()); p.chmod(0o644)', fixture], input=payload, check=True)
     listing = request('/files/')
+    assert listing[0] == 200 and name in [item['name'] for item in json.loads(listing[2])]
+    listing = request('/api/files')
     assert listing[0] == 200 and name in [item['name'] for item in json.loads(listing[2])]
     path = '/files/' + urllib.parse.quote(name)
     result = request(path)

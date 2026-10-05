@@ -30,6 +30,47 @@ const path = require('node:path');
     await page.locator('#files-tab').click();
     await page.locator('#files-panel').waitFor({state:'visible'});
     await page.locator('#refresh').click();
+    if (process.env.FILE_DELETE_TEST === '1') {
+      const prefix = process.env.FILE_FIXTURE_PREFIX;
+      if (!prefix || !process.env.TEST_ENV_FILE || !process.env.BASE_URL) throw new Error('Deletion tests require a disposable fixture service');
+      await page.waitForFunction(() => document.querySelectorAll('#files li').length === 3 && !document.querySelector('#files-clear').disabled);
+      const names = await page.locator('#files li strong').allTextContents();
+      if (!names.every(name => name.startsWith(prefix))) throw new Error('Refusing to delete files outside the test fixtures');
+      await page.setViewportSize({width:390,height:844});
+      if (await page.evaluate(() => document.documentElement.scrollWidth > 390)) throw new Error('Mobile file list overflows');
+
+      const singleName = names.find(name => name.endsWith('.epub'));
+      const single = page.getByRole('button', {name:singleName + ' 삭제', exact:true});
+      page.once('dialog', dialog => dialog.dismiss());
+      await single.click();
+      let listing = await (await context.request.get(base + '/api/files')).json();
+      if (!listing.some(file => file.name === singleName)) throw new Error('Cancel must keep the file');
+      page.once('dialog', dialog => dialog.accept());
+      const deleted = page.waitForResponse(response => response.url().endsWith('/api/files/delete') && response.request().method() === 'POST');
+      await single.click();
+      if ((await deleted).status() !== 200) throw new Error('Single deletion failed');
+      await page.waitForFunction(() => document.querySelectorAll('#files li').length === 2);
+
+      const snapshot = await (await context.request.get(base + '/api/state')).json();
+      await page.route('**/api/state', route => route.fulfill({json:{...snapshot, running:true}}));
+      await page.waitForFunction(() => document.querySelector('#file-delete-hint').textContent.includes('끝나면'));
+      if (!await page.locator('#files-clear').isDisabled() || !await page.locator('[data-file-delete]').first().isDisabled()) throw new Error('Running downloads must disable file deletion');
+      await page.unroute('**/api/state');
+      await page.waitForFunction(() => !document.querySelector('#files-clear').disabled);
+
+      page.once('dialog', dialog => dialog.dismiss());
+      await page.locator('#files-clear').click();
+      listing = await (await context.request.get(base + '/api/files')).json();
+      if (listing.length !== 2) throw new Error('Cancel must keep all remaining files');
+      page.once('dialog', dialog => dialog.accept());
+      const cleared = page.waitForResponse(response => response.url().endsWith('/api/files/clear') && response.request().method() === 'POST');
+      await page.locator('#files-clear').click();
+      if ((await cleared).status() !== 200) throw new Error('All deletion failed');
+      await page.waitForFunction(() => document.querySelectorAll('#files li').length === 0 && document.querySelector('#files-clear').disabled);
+      if (!await page.locator('#files-status').isVisible()) throw new Error('Missing empty-state message');
+      console.log('PASS: delete confirmation/cancel, single/all removal, running guard and mobile file layout');
+      await page.setViewportSize({width:1440,height:1100});
+    }
     await page.locator('#download-tab').click();
     if (process.env.SCREENSHOT_PREFIX) await page.screenshot({path:process.env.SCREENSHOT_PREFIX+'-desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});
