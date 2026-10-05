@@ -71,7 +71,7 @@ wrong = 'Basic ' + base64.b64encode(b'admin:wrong-password').decode()
 assert request('/', headers={'Authorization': wrong})[0] == 401
 for path in ['/', '/app.js', '/style.css', '/favicon.ico']:
     assert request(path)[0] == 200, path
-for path in ['/config.json', '/state/config.json', '/files/%2e%2e/state/config.json', '/.env', '/internal/close', '/novnc/core/rfb.js', '/websockify']:
+for path in ['/config.json', '/state/config.json', '/files/%2e%2e/state/config.json', '/.env', '/internal/close', '/novnc/core/rfb.js', '/websockify', '/imagebox/cover/test.file']:
     assert request(path)[0] == 404, path
 assert request('/healthz', False)[0] == 200
 assert request('/api/settings', data={'settings': {}}, headers={'X-Requested-With': ''})[0] == 403

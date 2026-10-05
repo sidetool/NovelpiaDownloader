@@ -38,6 +38,7 @@ internal static class WebHost
     [STAThread]
     private static void Main()
     {
+        ImageTransport.Register();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         window = new MainWin();

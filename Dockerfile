@@ -14,7 +14,7 @@ COPY . .
 RUN sha256sum --check docker/upstream.sha256 \
     && xbuild NovelpiaDownloader.csproj /p:Configuration=Release \
         /p:CscToolPath=/opt/roslyn/tasks/net472 /p:CscToolExe=csc.exe /verbosity:minimal \
-    && mcs docker/WebHost.cs -r:bin/Release/NovelpiaDownloader.exe \
+    && mcs docker/WebHost.cs docker/ImageTransport.cs -r:bin/Release/NovelpiaDownloader.exe \
         -r:System.Windows.Forms -r:System.Web.Extensions -out:bin/Release/NovelpiaWebHost.exe
 
 FROM debian:bookworm-slim

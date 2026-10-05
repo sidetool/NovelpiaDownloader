@@ -12,6 +12,8 @@
 
 원본 다운로드 처리에 Windows Forms가 결합되어 있어 서버 내부에는 Mono와 Xvfb 및 UI 메시지 루프가 필요합니다. 원본 창은 숨겨서 실행합니다. 브라우저 화면은 HTML 폼이며 VNC 서버, 원격 화면 또는 캔버스를 사용하지 않습니다. 웹에서 저장 경로는 `/data/downloads`로 고정합니다. 변경한 설정은 원본의 설정 저장 핸들러로 저장합니다.
 
+이미지 CDN이 TLS 1.3 연결을 요구하면 Mono의 HTTPS 구현은 연결에 실패합니다. `docker/ImageTransport.cs`가 `images.novelpia.com` 요청만 컨테이너 내부 Nginx(`127.0.0.1:8091`)로 전달하며, Nginx는 원래 CDN에 HTTPS로 접속하고 인증서와 호스트 이름을 검증합니다. 표지·삽화 다운로드, 재시도, 이미지 형식 판별과 EPUB 포함 처리는 계속 원본 메서드가 수행합니다. 이미지 전송 포트는 외부로 노출하지 않습니다.
+
 ## 실행
 
 Docker Compose와 Python 3가 필요합니다.
@@ -85,3 +87,10 @@ python3 tests/smoke.py --base-url https://사용할도메인:18443 --connect-add
 원본 보존, 인증, 설정 파일 접근 차단, API 상태·유효성 검사, 파일 목록·한글 파일명·다운로드를 검증합니다. `--exercise`를 추가하면 테스트용 LOGINKEY와 소설 번호 0으로 원본 설정 저장·큐 추가·중복 처리·삭제를 확인합니다. **이 옵션은 운영 로그인과 설정을 바꾸므로 사용자 데이터가 없는 테스트 인스턴스에서만 실행합니다.** 소설 제목 조회에는 외부 네트워크를 사용하지만 실제 회차를 다운로드하지 않습니다.
 
 Playwright가 설치되어 있으면 `node tests/browser.cjs`로 웹 폼, 옵션 저장, 대기열·파일 메뉴, 모바일 너비를 검증할 수 있습니다. `BASE_URL`, `CONNECT_ADDRESS`, `BROWSER_EXECUTABLE`, `PLAYWRIGHT_MODULE` 환경 변수로 테스트 대상을 지정합니다. 실제 노벨피아 계정으로 소설 다운로드가 되는지는 해당 계정으로 확인해야 합니다.
+
+이미지 전송 검증은 실제 CDN 이미지 주소로 실행합니다. 원본의 표지 다운로드, 프로토콜 상대 주소를 사용한 본문 삽화 다운로드, EPUB 이미지 참조와 파일 형식 판별을 확인하며 CDN 응답과 저장 이미지의 SHA-256이 같아야 통과합니다. 계정에 접근하거나 운영 설정을 변경하지 않습니다.
+
+```sh
+docker build --target build -t novelpia-downloader-build:local .
+python3 tests/images.py --image-url 'https://images.novelpia.com/imagebox/cover/검증할이미지.file'
+```
